@@ -11,7 +11,7 @@ base64 = "0.23"
 # cms 0.2 is built on the x509-cert 0.2 / der 0.7 / const-oid 0.9 line.
 cms = "0.2.3"
 const-oid = { version = "0.9", features = ["db"] }
-der = { version = "0.7", features = ["oid", "alloc"] }
+der = { version = "0.8", features = ["oid", "alloc"] }
 thiserror = "2"
 x509-cert = { version = "0.2", default-features = false }
 x509-parser = { version = "0.18", features = ["verify"] }
