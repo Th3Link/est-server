@@ -1,0 +1,6 @@
+apiVersion: v2
+name: est-server
+description: EST (RFC 7030) server that issues certificates through cert-manager
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

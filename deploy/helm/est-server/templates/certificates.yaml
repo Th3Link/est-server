@@ -1,0 +1,75 @@
+{{- $fullname := include "est-server.fullname" . -}}
+{{- if .Values.bootstrapCA.enabled }}
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: {{ $fullname }}-selfsigned
+  labels:
+    {{- include "est-server.labels" . | nindent 4 }}
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ $fullname }}-ca
+  labels:
+    {{- include "est-server.labels" . | nindent 4 }}
+spec:
+  isCA: true
+  commonName: {{ .Values.bootstrapCA.commonName | quote }}
+  secretName: {{ $fullname }}-ca
+  duration: {{ .Values.bootstrapCA.duration }}
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef:
+    name: {{ $fullname }}-selfsigned
+    kind: Issuer
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: {{ $fullname }}-ca
+  labels:
+    {{- include "est-server.labels" . | nindent 4 }}
+spec:
+  ca:
+    secretName: {{ $fullname }}-ca
+{{- end }}
+{{- if .Values.serverCertificate.create }}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ $fullname }}-tls
+  labels:
+    {{- include "est-server.labels" . | nindent 4 }}
+spec:
+  secretName: {{ $fullname }}-tls
+  {{- if not (or .Values.serverCertificate.dnsNames .Values.serverCertificate.ipAddresses) }}
+  {{- fail "serverCertificate.dnsNames (or ipAddresses) must name the host clients use in the EST URL" }}
+  {{- end }}
+  {{- with .Values.serverCertificate.dnsNames }}
+  dnsNames:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.serverCertificate.ipAddresses }}
+  ipAddresses:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  duration: {{ .Values.serverCertificate.duration }}
+  renewBefore: {{ .Values.serverCertificate.renewBefore }}
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+    rotationPolicy: Always
+  usages: [digital signature, server auth]
+  issuerRef:
+    {{- if .Values.serverCertificate.issuerRef.name }}
+    {{- toYaml .Values.serverCertificate.issuerRef | nindent 4 }}
+    {{- else }}
+    name: {{ $fullname }}-ca
+    kind: Issuer
+    {{- end }}
+{{- end }}

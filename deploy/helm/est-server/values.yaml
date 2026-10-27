@@ -1,0 +1,120 @@
+image:
+  repository: est-server
+  tag: ""            # defaults to the chart's appVersion
+  pullPolicy: IfNotPresent
+
+# With the cert-manager signer the server keeps no state, so several
+# replicas are fine. With a local CA and manual approval, use one replica
+# and persistence.
+replicaCount: 1
+
+service:
+  # EST needs TLS end to end (client certificates), so expose the pod
+  # directly: LoadBalancer (e.g. MetalLB) or NodePort. An Ingress only
+  # works with TLS passthrough.
+  type: LoadBalancer
+  port: 443
+  ipFamilyPolicy: PreferDualStack
+  ipFamilies: [IPv4, IPv6]
+  loadBalancerIP: ""
+  annotations: {}
+
+# The server's own TLS certificate, issued by cert-manager into the
+# secret <fullname>-tls.
+serverCertificate:
+  create: true
+  # Names clients use in the EST URL. Required.
+  dnsNames: []
+  ipAddresses: []
+  duration: 2160h
+  renewBefore: 720h
+  # Empty: the bootstrap CA below.
+  issuerRef: {}
+  #  name: my-cluster-issuer
+  #  kind: ClusterIssuer
+
+# A self-signed CA in the release namespace (Issuer <fullname>-ca, secret
+# <fullname>-ca). Its ca.crt is the trust anchor for clients.
+bootstrapCA:
+  enabled: true
+  commonName: EST CA
+  duration: 87600h
+
+# Secret with the CA certificate(s) of the issuer that signs client
+# certificates, key ca.crt. Served at /cacerts and trusted for renewals.
+# Empty: the bootstrap CA's secret.
+caSecret: ""
+
+rbac:
+  create: true
+  # Allow the server to approve CertificateRequests for these signers
+  # (needed when its policy approves on its own: identity, allowlist,
+  # renewal). See cert-manager's "Approval" documentation.
+  approveSigners:
+    - "issuers.cert-manager.io/*"
+    - "clusterissuers.cert-manager.io/*"
+
+serviceAccount:
+  create: true
+  name: ""
+
+# The server configuration (TOML). Rendered with tpl, so templates work.
+# Paths: server cert /etc/est-server/tls, issuer CA /etc/est-server/ca.
+#
+# NOTE on manual_approval with cert-manager: cert-manager's built-in
+# approver approves every request. For approval by an administrator,
+# disable it (controller flag --controllers=*,-certificaterequests-approver)
+# and approve with `cmctl approve` or approver-policy. est-server refuses
+# to hand out certificates the built-in approver approved for requests
+# that needed manual approval.
+config: |
+  [server]
+  listen = ["[::]:8443"]
+  health_listen = ["[::]:8080"]
+  state_dir = "/var/lib/est-server"
+
+  [server.tls]
+  cert = "/etc/est-server/tls/tls.crt"
+  key = "/etc/est-server/tls/tls.key"
+
+  [[label]]
+  signer = { type = "cert-manager", issuer = { name = "{{ include "est-server.fullname" . }}-ca", kind = "Issuer" }, cacerts = "/etc/est-server/ca/ca.crt", duration = "2160h" }
+  allow = []
+  identity_cas = []
+  manual_approval = true
+  retry_after = "2m"
+
+# Keep /var/lib/est-server (issue log, local-CA approvals) on a volume.
+persistence:
+  enabled: false
+  size: 100Mi
+  storageClass: ""
+
+# More volumes, e.g. device identity CAs or a local CA key.
+extraVolumes: []
+extraVolumeMounts: []
+
+resources:
+  requests:
+    cpu: 10m
+    memory: 32Mi
+  limits:
+    memory: 128Mi
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: [ALL]
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

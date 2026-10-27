@@ -1,0 +1,4 @@
+Parts of this crate (src/cms.rs) are derived from est-ca 0.2.0
+(https://crates.io/crates/est-ca) by Patrick Moore
+<patrick@patrick-moore.com>, licensed under Apache-2.0 OR MIT.
+The original license texts are in LICENSE-APACHE and LICENSE-MIT.

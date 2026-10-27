@@ -1,0 +1,81 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "est-server.fullname" . }}
+  labels:
+    {{- include "est-server.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "est-server.selector" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "est-server.selector" . | nindent 8 }}
+      annotations:
+        checksum/config: {{ tpl .Values.config . | sha256sum }}
+    spec:
+      serviceAccountName: {{ include "est-server.serviceAccount" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: est-server
+          image: "{{ .Values.image.repository }}:{{ default .Chart.AppVersion .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["--config", "/etc/est-server/config/est-server.toml", "serve"]
+          ports:
+            - name: est
+              containerPort: 8443
+            - name: health
+              containerPort: 8080
+          readinessProbe:
+            httpGet: { path: /readyz, port: health }
+          livenessProbe:
+            httpGet: { path: /healthz, port: health }
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - { name: config, mountPath: /etc/est-server/config, readOnly: true }
+            - { name: tls, mountPath: /etc/est-server/tls, readOnly: true }
+            - { name: ca, mountPath: /etc/est-server/ca, readOnly: true }
+            - { name: state, mountPath: /var/lib/est-server }
+            {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "est-server.fullname" . }}
+        - name: tls
+          secret:
+            secretName: {{ include "est-server.fullname" . }}-tls
+        - name: ca
+          secret:
+            secretName: {{ include "est-server.caSecret" . }}
+            items:
+              - { key: ca.crt, path: ca.crt }
+        - name: state
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "est-server.fullname" . }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

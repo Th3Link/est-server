@@ -1,0 +1,70 @@
+{{- $fullname := include "est-server.fullname" . -}}
+{{- if .Values.serviceAccount.create }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "est-server.serviceAccount" . }}
+  labels:
+    {{- include "est-server.labels" . | nindent 4 }}
+{{- end }}
+{{- if .Values.rbac.create }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $fullname }}
+  labels:
+    {{- include "est-server.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [cert-manager.io]
+    resources: [certificaterequests]
+    verbs: [get, list, create, delete]
+  - apiGroups: [cert-manager.io]
+    resources: [certificaterequests/status]
+    verbs: [patch, update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $fullname }}
+  labels:
+    {{- include "est-server.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $fullname }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "est-server.serviceAccount" . }}
+    namespace: {{ .Release.Namespace }}
+{{- with .Values.rbac.approveSigners }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $.Release.Namespace }}-{{ $fullname }}-approver
+  labels:
+    {{- include "est-server.labels" $ | nindent 4 }}
+rules:
+  - apiGroups: [cert-manager.io]
+    resources: [signers]
+    verbs: [approve]
+    resourceNames:
+      {{- toYaml . | nindent 6 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $.Release.Namespace }}-{{ $fullname }}-approver
+  labels:
+    {{- include "est-server.labels" $ | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $.Release.Namespace }}-{{ $fullname }}-approver
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "est-server.serviceAccount" $ }}
+    namespace: {{ $.Release.Namespace }}
+{{- end }}
+{{- end }}

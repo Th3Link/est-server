@@ -1,0 +1,2 @@
+# /usr/lib/sysusers.d/est-server.conf
+u est-server - "EST server" /var/lib/est-server

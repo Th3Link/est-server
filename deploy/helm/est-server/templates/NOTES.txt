@@ -1,0 +1,10 @@
+EST endpoint: https://{{ first .Values.serverCertificate.dnsNames | default "<service address>" }}:{{ .Values.service.port }}/.well-known/est
+{{- if .Values.bootstrapCA.enabled }}
+
+Trust anchor for clients (the bootstrap CA):
+  kubectl -n {{ .Release.Namespace }} get secret {{ include "est-server.fullname" . }}-ca -o jsonpath='{.data.ca\.crt}' | base64 -d
+{{- end }}
+
+Requests waiting for approval:
+  kubectl -n {{ .Release.Namespace }} get certificaterequests -l app.kubernetes.io/managed-by=est-server
+  cmctl approve -n {{ .Release.Namespace }} <name>
