@@ -157,24 +157,22 @@ impl ReloadingCert {
         Ok(true)
     }
 
-    /// Poll the files every `interval`.
-    pub fn watch(self: Arc<Self>, interval: Duration) {
-        tokio::spawn(async move {
-            let mut tick = tokio::time::interval(interval);
+    /// Poll the files every `interval`, forever.
+    pub async fn watch(self: Arc<Self>, interval: Duration) {
+        let mut tick = tokio::time::interval(interval);
+        tick.tick().await;
+        loop {
             tick.tick().await;
-            loop {
-                tick.tick().await;
-                match self.reload() {
-                    Ok(true) => {
-                        tracing::info!(cert = %self.cert_path.display(), "server certificate reloaded")
-                    }
-                    Ok(false) => {}
-                    Err(e) => {
-                        tracing::warn!(cert = %self.cert_path.display(), "server certificate not reloaded: {e:#}")
-                    }
+            match self.reload() {
+                Ok(true) => {
+                    tracing::info!(cert = %self.cert_path.display(), "server certificate reloaded")
+                }
+                Ok(false) => {}
+                Err(e) => {
+                    tracing::warn!(cert = %self.cert_path.display(), "server certificate not reloaded: {e:#}")
                 }
             }
-        });
+        }
     }
 
     /// The leaf currently served (DER).

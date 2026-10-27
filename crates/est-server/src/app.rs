@@ -79,13 +79,20 @@ pub async fn start(config: &Config) -> anyhow::Result<Running> {
         );
     }
 
+    // Everything the server runs in the background lives here, so that
+    // dropping `Running` stops all of it.
+    let mut tasks = JoinSet::new();
     if let Some(auto) = &config.server.tls.auto {
         let ca = cas[&auto.ca].clone();
         crate::autotls::ensure(&config.server.tls, auto, &ca)?;
-        crate::autotls::spawn(config.server.tls.clone(), auto.clone(), ca);
+        tasks.spawn(crate::autotls::renew_loop(
+            config.server.tls.clone(),
+            auto.clone(),
+            ca,
+        ));
     }
     let cert = ReloadingCert::load(&config.server.tls.cert, &config.server.tls.key)?;
-    cert.clone().watch(CERT_RELOAD_INTERVAL);
+    tasks.spawn(cert.clone().watch(CERT_RELOAD_INTERVAL));
 
     let pending = Arc::new(PendingStore::open(&config.server.state_dir)?);
     let mut kube_client = None;
@@ -109,7 +116,7 @@ pub async fn start(config: &Config) -> anyhow::Result<Running> {
             } => {
                 if kube_client.is_none() {
                     kube_client = Some(
-                        kube::Client::try_default()
+                        kube_client_for(&config.kubernetes)
                             .await
                             .context("Kubernetes client")?,
                     );
@@ -131,7 +138,7 @@ pub async fn start(config: &Config) -> anyhow::Result<Running> {
                         ca_certs: read_certs(cacerts)?,
                     },
                 ));
-                signer.clone().spawn_cleanup();
+                tasks.spawn(signer.clone().cleanup_loop());
                 Signer::CertManager(signer)
             }
         };
@@ -166,7 +173,6 @@ pub async fn start(config: &Config) -> anyhow::Result<Running> {
 
     let acceptor = TlsAcceptor::from(Arc::new(crate::tls::server_config(cert)?));
     let router = crate::http::router(app);
-    let mut tasks = JoinSet::new();
     let mut est_addrs = Vec::new();
     for listener in crate::net::bind_all(&config.server.listen)? {
         est_addrs.push(listener.local_addr()?);
@@ -206,4 +212,21 @@ pub async fn start(config: &Config) -> anyhow::Result<Running> {
         health_addrs,
         tasks,
     })
+}
+
+async fn kube_client_for(k: &crate::config::KubernetesConfig) -> anyhow::Result<kube::Client> {
+    let options = kube::config::KubeConfigOptions {
+        context: k.context.clone(),
+        ..Default::default()
+    };
+    let config = match &k.kubeconfig {
+        Some(path) => {
+            let file = kube::config::Kubeconfig::read_from(path)
+                .with_context(|| format!("read {}", path.display()))?;
+            kube::Config::from_custom_kubeconfig(file, &options).await?
+        }
+        None if k.context.is_some() => kube::Config::from_kubeconfig(&options).await?,
+        None => kube::Config::infer().await?,
+    };
+    Ok(kube::Client::try_from(config)?)
 }

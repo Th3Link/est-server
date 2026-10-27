@@ -245,17 +245,15 @@ impl CertManagerSigner {
     }
 
     /// Delete finished requests older than `keep`, unfinished ones older
-    /// than a week. Runs every ten minutes.
-    pub fn spawn_cleanup(self: std::sync::Arc<Self>) {
-        tokio::spawn(async move {
-            let mut tick = tokio::time::interval(Duration::from_secs(600));
-            loop {
-                tick.tick().await;
-                if let Err(e) = self.cleanup().await {
-                    tracing::warn!("CertificateRequest cleanup: {e:#}");
-                }
+    /// than a week. Runs every ten minutes, forever.
+    pub async fn cleanup_loop(self: std::sync::Arc<Self>) {
+        let mut tick = tokio::time::interval(Duration::from_secs(600));
+        loop {
+            tick.tick().await;
+            if let Err(e) = self.cleanup().await {
+                tracing::warn!("CertificateRequest cleanup: {e:#}");
             }
-        });
+        }
     }
 
     async fn cleanup(&self) -> anyhow::Result<()> {

@@ -111,16 +111,14 @@ fn is_current(tls: &TlsConfig, auto: &AutoTls, ca: &LocalCa, key: &KeyPair) -> b
     want_dns == have_dns && want_ips == have_ips && left > lifetime / 3
 }
 
-/// Check twice a day.
-pub fn spawn(tls: TlsConfig, auto: AutoTls, ca: Arc<LocalCa>) {
-    tokio::spawn(async move {
-        let mut tick = tokio::time::interval(Duration::from_secs(12 * 3600));
+/// Check twice a day, forever.
+pub async fn renew_loop(tls: TlsConfig, auto: AutoTls, ca: Arc<LocalCa>) {
+    let mut tick = tokio::time::interval(Duration::from_secs(12 * 3600));
+    tick.tick().await;
+    loop {
         tick.tick().await;
-        loop {
-            tick.tick().await;
-            if let Err(e) = ensure(&tls, &auto, &ca) {
-                tracing::error!("renewing the server certificate: {e:#}");
-            }
+        if let Err(e) = ensure(&tls, &auto, &ca) {
+            tracing::error!("renewing the server certificate: {e:#}");
         }
-    });
+    }
 }

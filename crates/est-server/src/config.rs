@@ -23,6 +23,19 @@ pub struct Config {
     /// `/.well-known/est/<name>`.
     #[serde(rename = "label")]
     pub labels: Vec<LabelConfig>,
+    /// How to reach the cluster for `cert-manager` signers.
+    #[serde(default)]
+    pub kubernetes: KubernetesConfig,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct KubernetesConfig {
+    /// A kubeconfig file. Without it the in-cluster service account is
+    /// used, or `$KUBECONFIG` / `~/.kube/config`.
+    pub kubeconfig: Option<PathBuf>,
+    /// The kubeconfig context; its current context if unset.
+    pub context: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -207,6 +220,9 @@ impl Config {
         fix(&mut self.server.state_dir);
         fix(&mut self.server.tls.cert);
         fix(&mut self.server.tls.key);
+        if let Some(kubeconfig) = &mut self.kubernetes.kubeconfig {
+            fix(kubeconfig);
+        }
         for ca in &mut self.cas {
             fix(&mut ca.cert);
             fix(&mut ca.key);

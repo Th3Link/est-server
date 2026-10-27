@@ -14,5 +14,6 @@ pub mod net;
 pub mod peer;
 pub mod pending;
 pub mod policy;
+pub mod run;
 pub mod signer;
 pub mod tls;

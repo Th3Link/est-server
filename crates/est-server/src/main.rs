@@ -118,15 +118,14 @@ fn serve(config_path: &Path) -> anyhow::Result<()> {
     let config = Config::load(config_path)?;
     let runtime = tokio::runtime::Runtime::new()?;
     runtime.block_on(async {
-        let running = est_server::app::start(&config).await?;
         let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
-        tokio::select! {
-            _ = running.wait() => anyhow::bail!("a listener stopped"),
-            _ = tokio::signal::ctrl_c() => {}
-            _ = term.recv() => {}
-        }
-        tracing::info!("shutting down");
-        Ok(())
+        let shutdown = async move {
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => {}
+                _ = term.recv() => {}
+            }
+        };
+        est_server::run::run(config, shutdown).await
     })
 }
 

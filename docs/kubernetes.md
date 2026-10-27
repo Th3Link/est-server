@@ -86,3 +86,17 @@ allow = ["*.home.example.com"]
 key from a secret via `extraVolumes`. With `manual_approval`, turn on
 `persistence` for the pending store, run one replica, and approve with
 `kubectl exec deploy/est-est-server -- est-server -c /etc/est-server/config/est-server.toml pending approve <id>`.
+
+## Server outside the cluster
+
+The server doesn't have to run in the cluster it sends its requests to.
+Without further configuration it uses the in-cluster service account, or
+`$KUBECONFIG` / `~/.kube/config`. To pin it:
+
+```toml
+[kubernetes]
+kubeconfig = "/etc/est-server/kubeconfig"   # relative to the config file
+context = "home"                            # optional
+```
+
+The end-to-end tests run the server this way, against a kind cluster.
