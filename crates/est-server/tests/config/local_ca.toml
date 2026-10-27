@@ -1,0 +1,27 @@
+# Server for one test, signing with a local CA. Setup replaces the @…@.
+
+[server]
+listen = ["[::]:@EST_PORT@"]
+health_listen = ["[::]:@HEALTH_PORT@"]
+state_dir = "state"
+
+[server.tls]
+cert = "tls/tls.crt"
+key = "tls/tls.key"
+auto = { ca = "ca", dns_names = ["@SERVER_NAME@"], ip_addresses = ["127.0.0.1", "::1"] }
+
+[[ca]]
+name = "ca"
+cert = "ca/ca.crt"
+key = "ca/ca.key"
+
+[[label]]
+signer = { type = "local", ca = "ca", validity = "30d" }
+allow = ["*.auto.test"]
+identity_cas = ["identity.pem"]
+manual_approval = true
+retry_after = "2m"
+
+[[label]]
+name = "strict"
+signer = { type = "local", ca = "ca" }

@@ -1,0 +1,32 @@
+# Server for one test, signing through cert-manager in the test's own
+# namespace (a CA issuer over the same CA as local_ca.toml). Setup
+# replaces the @…@.
+
+[server]
+listen = ["[::]:@EST_PORT@"]
+health_listen = ["[::]:@HEALTH_PORT@"]
+state_dir = "state"
+
+[server.tls]
+cert = "tls/tls.crt"
+key = "tls/tls.key"
+auto = { ca = "ca", dns_names = ["@SERVER_NAME@"], ip_addresses = ["127.0.0.1", "::1"] }
+
+[kubernetes]
+kubeconfig = "@KUBECONFIG@"
+
+[[ca]]
+name = "ca"
+cert = "ca/ca.crt"
+key = "ca/ca.key"
+
+[[label]]
+signer = { type = "cert-manager", namespace = "@NAMESPACE@", issuer = { name = "@ISSUER@" }, cacerts = "ca/ca.crt", duration = "720h", wait = "3s" }
+allow = ["*.auto.test"]
+identity_cas = ["identity.pem"]
+manual_approval = true
+retry_after = "2m"
+
+[[label]]
+name = "strict"
+signer = { type = "cert-manager", namespace = "@NAMESPACE@", issuer = { name = "@ISSUER@" }, cacerts = "ca/ca.crt", wait = "3s" }

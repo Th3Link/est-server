@@ -5,5 +5,19 @@
     ],
     "lockFileMaintenance": {
         "enabled": true
-    }
+    },
+    "customManagers": [
+        {
+            "customType": "regex",
+            "description": "cert-manager version of the e2e cluster",
+            "managerFilePatterns": [
+                "/^scripts/e2e-cluster\\.sh$/"
+            ],
+            "matchStrings": [
+                "CERT_MANAGER_VERSION:-(?<currentValue>v[0-9.]+)"
+            ],
+            "datasourceTemplate": "github-releases",
+            "depNameTemplate": "cert-manager/cert-manager"
+        }
+    ]
 }

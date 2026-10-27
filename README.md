@@ -69,14 +69,30 @@ More in [docs/standalone.md](docs/standalone.md). For Kubernetes, see
 | `deploy/helm/est-server` | Helm chart (cert-manager) |
 | `deploy/systemd` | systemd unit and sysusers file |
 | `Dockerfile` | static musl binary in a distroless image |
-| `tests/e2e/kind.sh` | end-to-end test with cert-manager in a dual-stack kind cluster |
+| `crates/est-server/tests` | end-to-end tests: a server per test, a gateway-like client over reqwest |
+| `scripts/e2e-cluster.sh` | throwaway kind cluster with cert-manager for the end-to-end tests |
 
 ## Tests
 
 ```sh
-cargo test                 # unit tests + gateway-like integration tests (IPv4 and IPv6)
-tests/e2e/kind.sh          # cert-manager end to end (needs docker, kind, helm, cmctl)
+cargo test                                  # unit tests, end to end with the local CA
+scripts/e2e-cluster.sh up                   # kind cluster with cert-manager (docker, kind, helm)
+EST_E2E_KUBECONFIG=target/e2e/kubeconfig cargo test -- --ignored   # end to end with cert-manager
+scripts/e2e-cluster.sh down
 ```
+
+Each end-to-end test starts its own server in-process through
+`est_server::run::run`, on free ports, with its own config directory
+(templates in `crates/est-server/tests/config`) and, for cert-manager,
+its own namespace with a CA issuer. The client is reqwest with a
+gateway-like device: P-256 key kept forever, CN+SAN CSR, base64 in 64
+character lines, mTLS with the issued certificate for renewals, over IPv4
+and IPv6. The scenarios in `tests/enrollment.rs` run once per backend
+(`<scenario>::local_ca`, `<scenario>::cert_manager`).
+
+The cert-manager tests take their cluster only from
+`EST_E2E_KUBECONFIG`, never from the default kubeconfig. Namespaces of
+failed runs carry the label `est-server-e2e`.
 
 ## License
 

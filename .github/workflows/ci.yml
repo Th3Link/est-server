@@ -49,6 +49,24 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace --locked
 
+  # The enrollment scenarios against a real cert-manager in a dual-stack
+  # kind cluster (the #[ignore]d tests); the server runs in-process.
+  e2e:
+    name: e2e / cert-manager
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: helm/kind-action@v1
+        with:
+          install_only: true
+      - uses: azure/setup-helm@v4
+      - run: scripts/e2e-cluster.sh up
+      - run: cargo test --workspace --locked -- --ignored
+        env:
+          EST_E2E_KUBECONFIG: ${{ github.workspace }}/target/e2e/kubeconfig
+
   msrv:
     name: ${{ matrix.crate }} / MSRV
     runs-on: ubuntu-latest

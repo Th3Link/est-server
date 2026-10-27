@@ -2,4 +2,4 @@ target
 .git
 deploy
 docs
-tests/e2e
+scripts
