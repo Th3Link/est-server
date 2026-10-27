@@ -1,0 +1,36 @@
+name: Security audit
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "**/Cargo.toml"
+      - "Cargo.lock"
+      - .github/workflows/audit.yml
+  pull_request:
+    paths:
+      - "**/Cargo.toml"
+      - "Cargo.lock"
+      - .github/workflows/audit.yml
+  schedule:
+    # Catch newly published advisories against dependencies that haven't
+    # changed. On this trigger rustsec/audit-check files a GitHub issue per
+    # advisory instead of failing a check.
+    - cron: "0 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  advisories:
+    name: advisories
+    runs-on: ubuntu-latest
+    permissions:
+      checks: write
+      issues: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: rustsec/audit-check@v2.0.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}

@@ -4,4 +4,5 @@ members = ["crates/est-proto", "crates/est-server"]
 
 [workspace.package]
 edition = "2024"
-rust-version = "1.85"
+license = "Apache-2.0 OR MIT"
+rust-version = "1.89"

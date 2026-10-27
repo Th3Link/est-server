@@ -77,3 +77,10 @@ More in [docs/standalone.md](docs/standalone.md). For Kubernetes, see
 cargo test                 # unit tests + gateway-like integration tests (IPv4 and IPv6)
 tests/e2e/kind.sh          # cert-manager end to end (needs docker, kind, helm, cmctl)
 ```
+
+## License
+
+Licensed under either of [Apache License 2.0](LICENSE-APACHE) or
+[MIT license](LICENSE-MIT) at your option. `est-proto` contains code
+derived from [est-ca](https://crates.io/crates/est-ca), see
+[its NOTICE](crates/est-proto/NOTICE).
