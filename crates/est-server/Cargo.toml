@@ -1,6 +1,6 @@
 [package]
 name = "est-server"
-version = "0.1.0"
+version = "0.2.0"
 description = "EST (RFC 7030) server for small clients, standalone or backed by cert-manager"
 edition.workspace = true
 license.workspace = true

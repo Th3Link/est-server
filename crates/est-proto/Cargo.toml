@@ -1,6 +1,6 @@
 [package]
 name = "est-proto"
-version = "0.1.0"
+version = "0.2.0"
 description = "EST (RFC 7030) wire format: base64 bodies, PKCS#10 requests, certs-only PKCS#7 responses"
 edition.workspace = true
 license.workspace = true
