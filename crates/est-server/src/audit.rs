@@ -18,6 +18,9 @@ pub struct Record<'a> {
     pub not_after: i64,
     pub client: String,
     pub client_cert: Option<&'a str>,
+    /// The registered client, if one was.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_id: Option<&'a str>,
     pub signer: &'a str,
 }
 

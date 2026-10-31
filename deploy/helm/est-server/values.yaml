@@ -41,8 +41,10 @@ bootstrapCA:
   duration: 87600h
 
 # Secret with the CA certificate(s) of the issuer that signs client
-# certificates, key ca.crt. Served at /cacerts and trusted for renewals.
-# Empty: the bootstrap CA's secret.
+# certificates, key ca.crt, mounted at /etc/est-server/ca. Served at
+# /cacerts and trusted for renewals. Empty: the bootstrap CA's secret if
+# that is enabled; otherwise none, and a signer without `cacerts` learns
+# them from the chains cert-manager returns.
 caSecret: ""
 
 rbac:
@@ -67,6 +69,21 @@ serviceAccount:
 # and approve with `cmctl approve` or approver-policy. est-server refuses
 # to hand out certificates the built-in approver approved for requests
 # that needed manual approval.
+#
+# Registered clients: with
+#
+#   [clients]
+#   kubernetes = {}        # EstClient objects in the release namespace
+#
+# and `registered = "required"` on a label, only clients registered as
+# EstClient (names plus public key pin, see `est-server pin`) get
+# certificates there; renewals are checked against the pinned key, not a
+# CA. The CRD comes with the chart (crds/). Recommended with a public CA
+# such as Let's Encrypt, e.g.:
+#
+#   [[label]]
+#   signer = { type = "cert-manager", issuer = { name = "letsencrypt", kind = "ClusterIssuer" }, duration = "2160h" }
+#   registered = "required"
 config: |
   [server]
   listen = ["[::]:8443"]

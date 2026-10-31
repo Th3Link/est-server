@@ -10,6 +10,10 @@ cert = "tls/tls.crt"
 key = "tls/tls.key"
 auto = { ca = "ca", dns_names = ["@SERVER_NAME@"], ip_addresses = ["127.0.0.1", "::1"] }
 
+[clients]
+dir = "clients.d"
+reload = "300ms"
+
 [[ca]]
 name = "ca"
 cert = "ca/ca.crt"
@@ -25,3 +29,8 @@ retry_after = "2m"
 [[label]]
 name = "strict"
 signer = { type = "local", ca = "ca" }
+
+[[label]]
+name = "registered"
+signer = { type = "local", ca = "ca" }
+registered = "required"

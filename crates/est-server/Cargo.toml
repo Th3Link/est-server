@@ -14,19 +14,22 @@ axum = { version = "0.8", default-features = false, features = ["http1", "http2"
 base64 = "0.23"
 clap = { version = "4", features = ["derive", "env"] }
 est-proto = { path = "../est-proto" }
+futures-util = "0.3.34"
 hex = "0.4"
 humantime = "2"
 humantime-serde = "1"
 hyper = { version = "1", features = ["http1", "http2", "server"] }
 hyper-util = { version = "0.1", features = ["tokio", "server-auto", "service"] }
 k8s-openapi = { version = "0.28", features = ["latest"] }
-kube = { version = "4.2", default-features = false, features = ["client", "config", "rustls-tls", "ring"] }
+kube = { version = "4.2", default-features = false, features = ["client", "config", "derive", "runtime", "rustls-tls", "ring"] }
 rcgen = { version = "0.14", features = ["x509-parser"] }
 ring = "0.17"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 rustls-webpki = { version = "0.103", default-features = false, features = ["ring", "std"] }
+schemars = "1.2.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+serde_yaml_ng = "0.10.0"
 socket2 = { version = "0.6", features = ["all"] }
 thiserror = "2"
 time = "0.3"

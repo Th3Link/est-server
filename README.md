@@ -22,6 +22,15 @@ authentication. Per endpoint ("label"):
 | `simpleenroll` | the client presents a certificate from a configured **device identity CA** that names the requested host, **or** every requested name matches the **allowlist** (`*.home.example.com`), **or** an administrator approves it (`202` + `Retry-After` until then; needs `manual_approval = true`) |
 | `simplereenroll` | the client presents its current certificate from this label's CA, for the same names. The key may stay the same |
 
+Or, stricter, with **registered clients** (`registered = "required"`): an
+administrator registers each client with its names and the pin of its
+public key, as a file or as an `EstClient` object in Kubernetes (GitOps).
+Only a registered key gets certificates, and only for its registered
+names. A renewal must present a certificate with a key of the same
+client. That is the mode to use with a public CA such as Let's Encrypt,
+whose certificates anyone can have. `registered = "optional"` approves
+registered keys and handles everything else as in the table.
+
 The issued certificates carry the requested DNS names as SAN, `digitalSignature`
 and the EKUs `serverAuth` and `clientAuth`. The `clientAuth` EKU is there so
 the client can authenticate its renewal with the certificate.

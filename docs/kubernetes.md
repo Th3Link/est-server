@@ -62,16 +62,72 @@ cmctl approve -n est est-1a2b3c...
 Finished requests are deleted after `keep` (default 24 h). Unfinished
 ones are deleted after 7 days.
 
+## Registered clients
+
+Instead of an allowlist, register every client as an `EstClient` with its
+names and the pin of its public key. Only registered keys get
+certificates then, and only for their names. The CRD comes with the chart
+(`crds/`, or `est-server crd`).
+
+```toml
+[clients]
+kubernetes = {}                 # EstClients in the release namespace; or { namespace = "…" }
+
+[[label]]
+signer = { type = "cert-manager", issuer = { name = "letsencrypt-dns", kind = "ClusterIssuer" }, duration = "2160h", wait = "20s" }
+registered = "required"
+```
+
+```yaml
+apiVersion: est.luehr.dev/v1alpha1
+kind: EstClient
+metadata:
+  name: gw1
+  namespace: est
+spec:
+  dnsNames: [gw1.example.com]
+  publicKeys:
+    - pinSha256: n+ySAtnNUmtp0GQTO6oZUJn+dFSHlAfPhBunhhOkG9Q=
+  # labels: [public]            # optional: only these EST labels
+```
+
+The pin is the RFC 7469 `pin-sha256` of the client's key. `est-server pin`
+reads it from the client's CSR, certificate or key:
+
+```sh
+est-server pin gw1.csr
+openssl req -in gw1.csr -pubkey -noout | openssl pkey -pubin -outform DER | openssl dgst -sha256 -binary | base64
+```
+
+- **Enrollment** needs a registered key and only registered names.
+- **Renewal** needs a TLS client certificate whose key belongs to the same
+  `EstClient` as the requested key. Which CA issued it doesn't matter.
+  Several `publicKeys` let a client change its key.
+- Changes take effect without a restart. The server reports in
+  `status.conditions` (`Valid`) whether it accepted an object and records
+  the last issued certificate in `status.lastIssued`:
+  `kubectl -n est get estclients`.
+- A key may belong to one client only. Objects that share one are ignored.
+- With `registered = "required"`, `allow`, `identity_cas` and
+  `manual_approval` are not allowed on the label. `registered = "optional"`
+  approves registered keys and handles all other requests as without.
+
+Keep the `EstClient`s in Git and let Flux or Argo CD apply them.
+
 ## Other issuers
 
 ```toml
 [[label]]
-signer = { type = "cert-manager", issuer = { name = "letsencrypt-dns", kind = "ClusterIssuer" }, cacerts = "/etc/est-server/ca/ca.crt", duration = "2160h", wait = "20s" }
-allow = ["*.home.example.com"]
+signer = { type = "cert-manager", issuer = { name = "letsencrypt-dns", kind = "ClusterIssuer" }, duration = "2160h", wait = "20s" }
+registered = "required"
 ```
 
-- `cacerts` holds the issuer's CA certificates (served at `/cacerts`, and
-  trusted for renewals). Mount them via `caSecret` or `extraVolumes`.
+- `cacerts` (optional) holds the issuer's CA certificates (served at
+  `/cacerts`, and trusted for renewals of unregistered clients). Mount them
+  via `caSecret` or `extraVolumes`. Without it the server learns them from
+  the chains cert-manager returns and keeps them in
+  `<state_dir>/learned-ca-<label>.json`. `/cacerts` answers `503` until the
+  first certificate is issued.
 - **ACME / Let's Encrypt (DNS-01)** works, which gives browser-trusted
   certificates. Issuing takes longer than `wait`, so clients get a `202`
   first. The names must be public DNS names in your zone. Let's Encrypt

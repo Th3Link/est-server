@@ -15,28 +15,6 @@ use reqwest::StatusCode;
 /// Time a cert-manager CA issuer gets to sign an approved request.
 const ISSUE_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// One test per backend for a scenario `fn(Backend, &'static str)`.
-macro_rules! for_each_backend {
-    ($($scenario:ident),* $(,)?) => {$(
-        mod $scenario {
-            use function_name::named;
-
-            #[named]
-            #[tokio::test]
-            async fn local_ca() -> anyhow::Result<()> {
-                super::$scenario(super::Backend::LocalCa, $crate::function_path!()).await
-            }
-
-            #[named]
-            #[tokio::test]
-            #[ignore = "needs a cluster with cert-manager: EST_E2E_KUBECONFIG"]
-            async fn cert_manager() -> anyhow::Result<()> {
-                super::$scenario(super::Backend::CertManager, $crate::function_path!()).await
-            }
-        }
-    )*};
-}
-
 for_each_backend!(
     approval_then_renewal,
     denied_request,

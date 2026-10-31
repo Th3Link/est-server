@@ -40,7 +40,9 @@ spec:
           volumeMounts:
             - { name: config, mountPath: /etc/est-server/config, readOnly: true }
             - { name: tls, mountPath: /etc/est-server/tls, readOnly: true }
+            {{- if include "est-server.caSecret" . }}
             - { name: ca, mountPath: /etc/est-server/ca, readOnly: true }
+            {{- end }}
             - { name: state, mountPath: /var/lib/est-server }
             {{- with .Values.extraVolumeMounts }}
             {{- toYaml . | nindent 12 }}
@@ -52,11 +54,13 @@ spec:
         - name: tls
           secret:
             secretName: {{ include "est-server.fullname" . }}-tls
+        {{- if include "est-server.caSecret" . }}
         - name: ca
           secret:
             secretName: {{ include "est-server.caSecret" . }}
             items:
               - { key: ca.crt, path: ca.crt }
+        {{- end }}
         - name: state
           {{- if .Values.persistence.enabled }}
           persistentVolumeClaim:

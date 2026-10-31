@@ -1,6 +1,31 @@
 use std::path::Path;
 
 /// `module::function` of the calling test; needs `#[named]` on it.
+/// One test per backend for a scenario `fn(Backend, &'static str)` in
+/// the calling module: `<scenario>::local_ca` and
+/// `<scenario>::cert_manager`, the latter `#[ignore]`d (it needs a cluster).
+#[macro_export]
+macro_rules! for_each_backend {
+    ($($scenario:ident),* $(,)?) => {$(
+        mod $scenario {
+            use function_name::named;
+
+            #[named]
+            #[tokio::test]
+            async fn local_ca() -> anyhow::Result<()> {
+                super::$scenario(super::Backend::LocalCa, $crate::function_path!()).await
+            }
+
+            #[named]
+            #[tokio::test]
+            #[ignore = "needs a cluster with cert-manager: EST_E2E_KUBECONFIG"]
+            async fn cert_manager() -> anyhow::Result<()> {
+                super::$scenario(super::Backend::CertManager, $crate::function_path!()).await
+            }
+        }
+    )*};
+}
+
 #[macro_export]
 macro_rules! function_path {
     () => {

@@ -54,6 +54,34 @@ The client gets the certificate the next time it asks (after
 `Retry-After`). An approval covers one key and one set of names and stays
 good for 7 days. Requests untouched for 30 days are deleted.
 
+## Registered clients
+
+Register clients with their names and the pin of their public key, one
+TOML file per client in a directory:
+
+```toml
+# clients.d/gw1.toml
+dns_names = ["gw1.example.com"]
+public_keys = [{ pin_sha256 = "n+ySAtnNUmtp0GQTO6oZUJn+dFSHlAfPhBunhhOkG9Q=" }]
+labels = []                       # optional: only these EST labels
+```
+
+```toml
+# est-server.toml
+[clients]
+dir = "clients.d"                 # re-read every reload (default 30s)
+
+[[label]]
+signer = { type = "local", ca = "local" }
+registered = "required"           # or "optional"
+```
+
+`est-server pin <csr|certificate|key>` prints the pin. With `required`,
+only registered keys get certificates, only for their names, and a
+renewal must present a certificate with a key of the same client.
+`optional` approves registered keys and handles the rest as usual.
+Invalid files are logged and ignored.
+
 ## Configuration reference
 
 ```toml
@@ -73,6 +101,10 @@ cert = "ca/ca.crt"                # the signing CA (root or intermediate)
 key = "ca/ca.key"
 chain = "ca/chain.pem"            # optional: certificates above it
 
+[clients]                         # optional: registered clients
+dir = "clients.d"
+# kubernetes = { namespace = "est" }   # EstClient objects
+
 [[label]]                         # name = "" -> /.well-known/est
 name = ""
 # path = "/est/gateways"          # optional: a path of its own
@@ -83,6 +115,7 @@ identity_name_match = true        # the identity must name the requested hosts
 manual_approval = true
 retry_after = "2m"
 include_root = false              # send the root CA along
+registered = "off"                # off | optional | required, see "Registered clients"
 
 [[label]]                         # -> /.well-known/est/servers
 name = "servers"

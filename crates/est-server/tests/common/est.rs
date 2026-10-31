@@ -71,12 +71,32 @@ pub struct Device {
 }
 
 impl Device {
+    /// A P-256 key, as the gateway has.
     pub fn new(fqdn: &str) -> Self {
+        Self::with_alg(fqdn, &rcgen::PKCS_ECDSA_P256_SHA256)
+    }
+
+    pub fn with_alg(fqdn: &str, alg: &'static rcgen::SignatureAlgorithm) -> Self {
         Self {
             fqdn: fqdn.to_string(),
-            key: KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256).unwrap(),
+            key: KeyPair::generate_for(alg).unwrap(),
             chain: Vec::new(),
         }
+    }
+
+    /// The device's key with a certificate it got elsewhere.
+    pub fn from_credential(fqdn: &str, cred: Credential) -> Self {
+        Self {
+            fqdn: fqdn.to_string(),
+            key: cred.key,
+            chain: cred.chain,
+        }
+    }
+
+    /// The `pin-sha256` an administrator registers.
+    pub fn pin(&self) -> String {
+        use est_server::clients::{encode_pin, pin};
+        encode_pin(&pin(&self.key.subject_public_key_info()))
     }
 
     /// The device's CSR for its own name.
@@ -300,7 +320,7 @@ impl Est {
 }
 
 /// Read an EST answer; asserts the framing the gateway relies on.
-async fn answer(resp: reqwest::Response) -> Result<Answer> {
+pub async fn answer(resp: reqwest::Response) -> Result<Answer> {
     match resp.status() {
         StatusCode::OK => {}
         StatusCode::ACCEPTED => {

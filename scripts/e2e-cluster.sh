@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # A throwaway dual-stack kind cluster with cert-manager (without its
-# built-in approver) for the end-to-end tests. Its kubeconfig goes to
+# built-in approver) and the EstClient CRD for the end-to-end tests. Its kubeconfig goes to
 # target/e2e/kubeconfig; your own ~/.kube/config is left alone.
 #
 #   scripts/e2e-cluster.sh up      # create (or reuse) the cluster
 #   EST_E2E_KUBECONFIG=target/e2e/kubeconfig cargo test -- --ignored
 #   scripts/e2e-cluster.sh down    # delete it
 #
-# Needs: docker, kind, helm.
+# Needs: docker, kind, helm, kubectl.
 set -euo pipefail
 
 CLUSTER=${EST_E2E_CLUSTER:-est-e2e}
@@ -33,6 +33,7 @@ YAML
     -n cert-manager --create-namespace --wait --timeout 5m \
     --set crds.enabled=true \
     --set 'extraArgs[0]=--controllers=*\,-certificaterequests-approver'
+  kubectl apply -f "$ROOT/deploy/helm/est-server/crds/"
   echo
   echo "export EST_E2E_KUBECONFIG=$KUBECONFIG_FILE"
 }

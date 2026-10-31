@@ -15,6 +15,9 @@ auto = { ca = "ca", dns_names = ["@SERVER_NAME@"], ip_addresses = ["127.0.0.1", 
 [kubernetes]
 kubeconfig = "@KUBECONFIG@"
 
+[clients]
+kubernetes = { namespace = "@NAMESPACE@" }
+
 [[ca]]
 name = "ca"
 cert = "ca/ca.crt"
@@ -30,3 +33,9 @@ retry_after = "2m"
 [[label]]
 name = "strict"
 signer = { type = "cert-manager", namespace = "@NAMESPACE@", issuer = { name = "@ISSUER@" }, cacerts = "ca/ca.crt", wait = "3s" }
+
+# No cacerts: learned from what cert-manager issues.
+[[label]]
+name = "registered"
+signer = { type = "cert-manager", namespace = "@NAMESPACE@", issuer = { name = "@ISSUER@" }, wait = "3s" }
+registered = "required"

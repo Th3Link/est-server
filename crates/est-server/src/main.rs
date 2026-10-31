@@ -58,6 +58,15 @@ enum Command {
     /// Requests waiting for approval (local CA).
     #[command(subcommand)]
     Pending(PendingCommand),
+    /// Print the pin-sha256 of the public key in a CSR, certificate,
+    /// public key or PKCS#8 private key (PEM or DER), for registering a
+    /// client.
+    Pin {
+        /// The file; `-` for standard input.
+        file: PathBuf,
+    },
+    /// Print the EstClient CustomResourceDefinition.
+    Crd,
 }
 
 #[derive(Subcommand)]
@@ -111,6 +120,25 @@ fn main() -> anyhow::Result<()> {
             force,
         }),
         Command::Pending(cmd) => pending(&cli.config, cmd),
+        Command::Pin { file } => {
+            let data = if file.as_os_str() == "-" {
+                let mut data = Vec::new();
+                std::io::Read::read_to_end(&mut std::io::stdin(), &mut data)?;
+                data
+            } else {
+                std::fs::read(&file).with_context(|| format!("read {}", file.display()))?
+            };
+            let spki = est_server::clients::spki_of(&data)?;
+            println!(
+                "{}",
+                est_server::clients::encode_pin(&est_server::clients::pin(&spki))
+            );
+            Ok(())
+        }
+        Command::Crd => {
+            print!("{}", est_server::clients::k8s::crd_yaml());
+            Ok(())
+        }
     }
 }
 

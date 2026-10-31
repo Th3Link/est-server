@@ -8,6 +8,7 @@ use anyhow::{Context, bail};
 use serde::Deserialize;
 
 use crate::names::NamePattern;
+pub use crate::policy::Registration;
 
 const DAY: u64 = 86_400;
 
@@ -23,9 +24,30 @@ pub struct Config {
     /// `/.well-known/est/<name>`.
     #[serde(rename = "label")]
     pub labels: Vec<LabelConfig>,
-    /// How to reach the cluster for `cert-manager` signers.
+    /// How to reach the cluster for `cert-manager` signers and
+    /// `EstClient`s.
     #[serde(default)]
     pub kubernetes: KubernetesConfig,
+    /// Where registered clients come from (see `registered` on a label).
+    pub clients: Option<ClientsConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClientsConfig {
+    /// A directory with one TOML file per client, re-read every `reload`.
+    pub dir: Option<PathBuf>,
+    #[serde(default = "default_clients_reload", with = "humantime_serde")]
+    pub reload: Duration,
+    /// `EstClient` objects in Kubernetes, watched.
+    pub kubernetes: Option<KubernetesClients>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct KubernetesClients {
+    /// Defaults to the pod's namespace.
+    pub namespace: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -121,6 +143,11 @@ pub struct LabelConfig {
     /// Put the root CA into the answer too.
     #[serde(default)]
     pub include_root: bool,
+    /// Registered clients: `off`, `optional` (a registered key gets its
+    /// names without approval) or `required` (only registered keys get
+    /// anything, renewals included).
+    #[serde(default)]
+    pub registered: Registration,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -141,8 +168,9 @@ pub enum SignerConfig {
         #[serde(default, with = "humantime_serde")]
         duration: Option<Duration>,
         /// The issuer's CA certificates (PEM): served at `/cacerts` and
-        /// trusted for `simplereenroll`.
-        cacerts: PathBuf,
+        /// trusted for `simplereenroll`. Unset: learned from the chains
+        /// cert-manager returns.
+        cacerts: Option<PathBuf>,
         /// How long one EST request waits for the certificate before it
         /// answers `202`.
         #[serde(default = "default_wait", with = "humantime_serde")]
@@ -178,6 +206,9 @@ fn default_validity() -> Duration {
 }
 fn default_retry_after() -> Duration {
     Duration::from_secs(120)
+}
+fn default_clients_reload() -> Duration {
+    Duration::from_secs(30)
 }
 fn default_wait() -> Duration {
     Duration::from_secs(20)
@@ -232,9 +263,16 @@ impl Config {
         }
         for label in &mut self.labels {
             label.identity_cas.iter_mut().for_each(fix);
-            if let SignerConfig::CertManager { cacerts, .. } = &mut label.signer {
+            if let SignerConfig::CertManager {
+                cacerts: Some(cacerts),
+                ..
+            } = &mut label.signer
+            {
                 fix(cacerts);
             }
+        }
+        if let Some(dir) = self.clients.as_mut().and_then(|c| c.dir.as_mut()) {
+            fix(dir);
         }
     }
 
@@ -244,6 +282,12 @@ impl Config {
         }
         if self.labels.is_empty() {
             bail!("no [[label]] configured");
+        }
+        if let Some(c) = &self.clients
+            && c.dir.is_none()
+            && c.kubernetes.is_none()
+        {
+            bail!("[clients] needs dir or kubernetes");
         }
         let ca_exists = |name: &str| self.cas.iter().any(|c| c.name == name);
         if let Some(auto) = &self.server.tls.auto {
@@ -280,6 +324,24 @@ impl Config {
             }
             for pattern in &label.allow {
                 NamePattern::parse(pattern).map_err(anyhow::Error::msg)?;
+            }
+            if label.registered != Registration::Off && self.clients.is_none() {
+                bail!(
+                    "label {:?}: registered = {:?} needs a [clients] section",
+                    label.name,
+                    label.registered
+                );
+            }
+            if label.registered == Registration::Required
+                && (!label.allow.is_empty()
+                    || !label.identity_cas.is_empty()
+                    || label.manual_approval)
+            {
+                bail!(
+                    "label {:?}: with registered = \"required\" only registered clients get \
+                     certificates; remove allow, identity_cas and manual_approval",
+                    label.name
+                );
             }
             if let SignerConfig::Local { ca, validity } = &label.signer {
                 if !ca_exists(ca) {
@@ -349,6 +411,51 @@ mod tests {
         assert!(
             matches!(&c.labels[1].signer, SignerConfig::CertManager { issuer, wait, .. }
             if issuer.group == "cert-manager.io" && *wait == Duration::from_secs(20))
+        );
+    }
+
+    #[test]
+    fn checks_registration() {
+        let base = r#"
+            [server]
+            state_dir = "s"
+            [server.tls]
+            cert = "c"
+            key = "k"
+            [[ca]]
+            name = "ca"
+            cert = "ca.crt"
+            key = "ca.key"
+        "#;
+        let check = |rest: &str| {
+            toml::from_str::<Config>(&format!("{base}{rest}"))
+                .map_err(anyhow::Error::from)
+                .and_then(|c| c.validate())
+        };
+        let label = r#"
+            [[label]]
+            signer = { type = "local", ca = "ca" }
+            registered = "required"
+        "#;
+        assert!(check(label).is_err(), "needs [clients]");
+        assert!(
+            check(&format!("[clients]\n{label}")).is_err(),
+            "needs a source"
+        );
+        assert!(check(&format!("[clients]\ndir = \"d\"\n{label}")).is_ok());
+        assert!(
+            check(&format!(
+                "[clients]\ndir = \"d\"\n{label}allow = [\"*.x.test\"]\n"
+            ))
+            .is_err(),
+            "required excludes the allowlist"
+        );
+        assert!(
+            check(&format!(
+                "[clients]\nkubernetes = {{}}\n{}",
+                label.replace("required", "optional")
+            ))
+            .is_ok()
         );
     }
 }

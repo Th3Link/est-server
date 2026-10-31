@@ -81,6 +81,7 @@ impl Setup {
         write(&dir.join("ca/ca.key"), &ca_key).unwrap();
         let (identity_cert, identity_key) = new_ca("Device Identity CA");
         write(&dir.join("identity.pem"), &identity_cert).unwrap();
+        std::fs::create_dir_all(dir.join("clients.d")).unwrap();
         let (stranger_cert, stranger_key) = new_ca("Stranger CA");
 
         let est_port = find_free_port().unwrap();
@@ -240,6 +241,36 @@ impl Setup {
             }
             Backend::CertManager if approve => self.cluster().approve(names).await,
             Backend::CertManager => self.cluster().deny(names).await,
+        }
+    }
+
+    /// Register a client (names, key pins) the way an administrator
+    /// would, and wait until the server knows it.
+    pub async fn register(&self, name: &str, names: &[&str], pins: &[String]) -> Result<()> {
+        match self.backend {
+            Backend::LocalCa => {
+                let names: Vec<String> = names.iter().map(|n| format!("{n:?}")).collect();
+                let keys: Vec<String> = pins
+                    .iter()
+                    .map(|p| format!("{{ pin_sha256 = {p:?} }}"))
+                    .collect();
+                write(
+                    &self
+                        .conf_dir
+                        .path()
+                        .join("clients.d")
+                        .join(format!("{name}.toml")),
+                    &format!(
+                        "dns_names = [{}]\npublic_keys = [{}]\n",
+                        names.join(", "),
+                        keys.join(", ")
+                    ),
+                )?;
+                // Re-read every 300 ms (local_ca.toml).
+                tokio::time::sleep(Duration::from_millis(1000)).await;
+                Ok(())
+            }
+            Backend::CertManager => self.cluster().register(name, names, pins).await,
         }
     }
 

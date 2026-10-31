@@ -7,7 +7,7 @@ use anyhow::anyhow;
 use rcgen::CertificateSigningRequestParams;
 use rustls::pki_types::{CertificateDer, CertificateSigningRequestDer};
 
-use super::{Outcome, SignRequest};
+use super::{CaCerts, Outcome, SignRequest};
 use crate::ca::{LeafSpec, LocalCa, answer_chain};
 use crate::pending::{Entry, PendingStore, Status, now};
 
@@ -17,6 +17,7 @@ pub struct LocalSigner {
     pub include_root: bool,
     pub pending: Arc<PendingStore>,
     pub ca_certs: Vec<CertificateDer<'static>>,
+    pub cas: CaCerts,
 }
 
 impl LocalSigner {
@@ -25,15 +26,16 @@ impl LocalSigner {
         validity: Duration,
         include_root: bool,
         pending: Arc<PendingStore>,
-    ) -> Self {
+    ) -> anyhow::Result<Self> {
         let ca_certs = ca.ca_certs();
-        Self {
+        Ok(Self {
+            cas: CaCerts::new(ca_certs.clone())?,
             ca,
             validity,
             include_root,
             pending,
             ca_certs,
-        }
+        })
     }
 
     pub fn sign(&self, req: &SignRequest<'_>, approved: bool) -> anyhow::Result<Outcome> {

@@ -18,6 +18,8 @@ allow = [
     "ISC",
     "MIT",
     "Unicode-3.0",
+    # foldhash, via hashbrown in kube-runtime.
+    "Zlib",
     # webpki-root-certs (Mozilla's root list as data), via reqwest in the
     # integration tests only.
     "CDLA-Permissive-2.0",

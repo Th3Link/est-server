@@ -3,6 +3,8 @@
 //! `cmctl approve` or approver-policy.
 
 use std::collections::BTreeMap;
+use std::path::PathBuf;
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, anyhow};
@@ -14,7 +16,7 @@ use kube::core::GroupVersionKind;
 use rustls::pki_types::CertificateDer;
 use serde_json::{Value, json};
 
-use super::{Outcome, SignRequest};
+use super::{CaCerts, Outcome, SignRequest};
 use crate::ca::is_self_signed;
 use crate::config::IssuerRef;
 use crate::tls::parse_certs;
@@ -31,8 +33,27 @@ pub struct CertManagerSigner {
     reuse_window: Duration,
     keep: Duration,
     include_root: bool,
-    pub ca_certs: Vec<CertificateDer<'static>>,
+    pub cas: CaCerts,
+    /// Set when no `cacerts` are configured.
+    learned: Option<Mutex<Learned>>,
 }
+
+/// CA certificates learned from issued chains, kept in the state
+/// directory across restarts.
+#[derive(Default, serde::Serialize, serde::Deserialize)]
+struct Learned {
+    #[serde(skip)]
+    path: PathBuf,
+    /// Above the leaf in the newest chain: what `/cacerts` answers.
+    latest: Vec<String>,
+    /// Every CA certificate seen in a chain and not expired: what
+    /// renewals are checked against (an issuer may switch between
+    /// intermediates from one certificate to the next).
+    seen: Vec<String>,
+}
+
+/// At most this many learned CA certificates are kept.
+const MAX_LEARNED: usize = 20;
 
 /// Where a `CertificateRequest` stands.
 #[derive(Debug, PartialEq)]
@@ -51,17 +72,38 @@ pub struct Settings {
     pub reuse_window: Duration,
     pub keep: Duration,
     pub include_root: bool,
-    pub ca_certs: Vec<CertificateDer<'static>>,
+    pub ca_certs: CaSource,
+}
+
+/// Where the issuer's CA certificates come from.
+pub enum CaSource {
+    /// Configured (`cacerts`).
+    Fixed(Vec<CertificateDer<'static>>),
+    /// Learned from the issued chains, kept in this file.
+    Learn(PathBuf),
 }
 
 impl CertManagerSigner {
-    pub fn new(client: Client, s: Settings) -> Self {
+    pub fn new(client: Client, s: Settings) -> anyhow::Result<Self> {
         let ar = ApiResource::from_gvk(&GroupVersionKind::gvk(
             "cert-manager.io",
             "v1",
             "CertificateRequest",
         ));
-        Self {
+        let (cas, learned) = match s.ca_certs {
+            CaSource::Fixed(certs) => (CaCerts::new(certs)?, None),
+            CaSource::Learn(path) => {
+                let mut learned: Learned = std::fs::read(&path)
+                    .ok()
+                    .and_then(|b| serde_json::from_slice(&b).ok())
+                    .unwrap_or_default();
+                learned.path = path;
+                let cas = CaCerts::new(Vec::new())?;
+                cas.set(decode_ders(&learned.latest), &decode_ders(&learned.seen))?;
+                (cas, Some(Mutex::new(learned)))
+            }
+        };
+        Ok(Self {
             api: Api::namespaced_with(client, &s.namespace, &ar),
             issuer: s.issuer,
             duration: s.duration,
@@ -69,7 +111,72 @@ impl CertManagerSigner {
             reuse_window: s.reuse_window,
             keep: s.keep,
             include_root: s.include_root,
-            ca_certs: s.ca_certs,
+            cas,
+            learned,
+        })
+    }
+
+    /// With nothing learned yet (a first start, or no state kept), learn
+    /// from the newest finished request in the namespace.
+    pub async fn learn_from_cluster(&self) -> anyhow::Result<()> {
+        if self.learned.is_none() || !self.cas.certs().is_empty() {
+            return Ok(());
+        }
+        let mut objects = self
+            .api
+            .list(&ListParams::default().labels(MANAGED_BY))
+            .await
+            .context("list CertificateRequests")?
+            .items;
+        objects.sort_by_key(|o| std::cmp::Reverse(o.metadata.creation_timestamp.clone()));
+        for obj in objects {
+            if let State::Ready(cert, ca) = state(&obj) {
+                let mut chain = parse_certs(cert.as_bytes()).context("status.certificate")?;
+                if let Some(ca) = ca.filter(|s| !s.trim().is_empty()) {
+                    chain.extend(parse_certs(ca.as_bytes()).context("status.ca")?);
+                }
+                self.learn(&chain[1..]);
+                break;
+            }
+        }
+        Ok(())
+    }
+
+    /// Note the CA certificates of an issued chain.
+    fn learn(&self, above_leaf: &[CertificateDer<'static>]) {
+        let Some(learned) = &self.learned else {
+            return;
+        };
+        if above_leaf.is_empty() {
+            return;
+        }
+        let mut l = learned.lock().unwrap_or_else(|e| e.into_inner());
+        let latest = encode_ders(above_leaf);
+        if l.latest == latest && latest.iter().all(|c| l.seen.contains(c)) {
+            return;
+        }
+        let mut seen = latest.clone();
+        seen.extend(l.seen.iter().filter(|c| !latest.contains(c)).cloned());
+        seen.retain(|c| !expired(c));
+        seen.truncate(MAX_LEARNED);
+        if let Err(e) = self.cas.set(above_leaf.to_vec(), &decode_ders(&seen)) {
+            tracing::warn!("learning the CA certificates: {e:#}");
+            return;
+        }
+        tracing::info!(
+            certificates = above_leaf.len(),
+            known = seen.len(),
+            "learned the CA certificates from cert-manager"
+        );
+        l.latest = latest;
+        l.seen = seen;
+        match serde_json::to_vec_pretty(&*l) {
+            Ok(json) => {
+                if let Err(e) = crate::ca::write_file(&l.path, &json, false) {
+                    tracing::warn!("keeping the learned CA certificates: {e:#}");
+                }
+            }
+            Err(e) => tracing::warn!("keeping the learned CA certificates: {e}"),
         }
     }
 
@@ -234,6 +341,7 @@ impl CertManagerSigner {
                 }
             }
         }
+        self.learn(&chain[1..]);
         let leaf = chain.remove(0);
         Ok(std::iter::once(leaf)
             .chain(
@@ -345,13 +453,43 @@ fn base64_pem(der: &[u8]) -> String {
         .encode(est_proto::wire::to_pem("CERTIFICATE REQUEST", der))
 }
 
+fn encode_ders(certs: &[CertificateDer<'static>]) -> Vec<String> {
+    use base64::Engine as _;
+    certs
+        .iter()
+        .map(|c| base64::engine::general_purpose::STANDARD.encode(c))
+        .collect()
+}
+
+fn decode_ders(certs: &[String]) -> Vec<CertificateDer<'static>> {
+    use base64::Engine as _;
+    certs
+        .iter()
+        .filter_map(|c| base64::engine::general_purpose::STANDARD.decode(c).ok())
+        .map(CertificateDer::from)
+        .collect()
+}
+
+fn expired(b64_der: &str) -> bool {
+    decode_ders(&[b64_der.to_string()])
+        .first()
+        .is_none_or(|der| {
+            x509_parser::parse_x509_certificate(der)
+                .map(|(_, c)| {
+                    c.validity().not_after.timestamp()
+                        < time::OffsetDateTime::now_utc().unix_timestamp()
+                })
+                .unwrap_or(true)
+        })
+}
+
 fn decode_b64(s: &str) -> Option<String> {
     use base64::Engine as _;
     let bytes = base64::engine::general_purpose::STANDARD.decode(s).ok()?;
     String::from_utf8(bytes).ok()
 }
 
-fn rfc3339_now() -> String {
+pub fn rfc3339_now() -> String {
     time::OffsetDateTime::now_utc()
         .replace_nanosecond(0)
         .ok()

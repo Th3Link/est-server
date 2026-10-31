@@ -26,6 +26,11 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 {{- end -}}
 
+{{/* The secret with the issuer's ca.crt; empty when the server learns it. */}}
 {{- define "est-server.caSecret" -}}
-{{- default (printf "%s-ca" (include "est-server.fullname" .)) .Values.caSecret -}}
+{{- if .Values.caSecret -}}
+{{- .Values.caSecret -}}
+{{- else if .Values.bootstrapCA.enabled -}}
+{{- printf "%s-ca" (include "est-server.fullname" .) -}}
+{{- end -}}
 {{- end -}}

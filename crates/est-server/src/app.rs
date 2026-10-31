@@ -12,13 +12,14 @@ use tokio_rustls::TlsAcceptor;
 
 use crate::audit::AuditLog;
 use crate::ca::LocalCa;
-use crate::config::{Config, SignerConfig};
+use crate::clients::Registry;
+use crate::config::{Config, KubernetesConfig, SignerConfig};
 use crate::names::NamePattern;
 use crate::peer::TrustStore;
 use crate::pending::PendingStore;
 use crate::policy::Policy;
 use crate::signer::Signer;
-use crate::signer::cert_manager::{CertManagerSigner, Settings};
+use crate::signer::cert_manager::{CaSource, CertManagerSigner, Settings};
 use crate::signer::local::LocalSigner;
 use crate::tls::{ReloadingCert, read_certs};
 
@@ -36,6 +37,7 @@ pub struct Label {
 pub struct App {
     labels: Vec<Label>,
     pub audit: AuditLog,
+    pub clients: Arc<Registry>,
 }
 
 impl App {
@@ -95,7 +97,28 @@ pub async fn start(config: &Config) -> anyhow::Result<Running> {
     tasks.spawn(cert.clone().watch(CERT_RELOAD_INTERVAL));
 
     let pending = Arc::new(PendingStore::open(&config.server.state_dir)?);
-    let mut kube_client = None;
+    let mut kube = LazyKube::new(&config.kubernetes);
+
+    let clients = Arc::new(Registry::default());
+    if let Some(cc) = &config.clients {
+        if let Some(dir) = &cc.dir {
+            crate::clients::file::init(&clients, dir)?;
+            tasks.spawn(crate::clients::file::watch(
+                clients.clone(),
+                dir.clone(),
+                cc.reload,
+            ));
+        }
+        if let Some(k) = &cc.kubernetes {
+            let client = kube.get().await?;
+            let namespace = k
+                .namespace
+                .clone()
+                .unwrap_or_else(|| client.default_namespace().to_string());
+            tasks.spawn(crate::clients::k8s::init(clients.clone(), client, &namespace).await?);
+        }
+    }
+
     let mut labels = Vec::new();
     for lc in &config.labels {
         let signer = match &lc.signer {
@@ -104,7 +127,7 @@ pub async fn start(config: &Config) -> anyhow::Result<Running> {
                 *validity,
                 lc.include_root,
                 pending.clone(),
-            )),
+            )?),
             SignerConfig::CertManager {
                 namespace,
                 issuer,
@@ -114,17 +137,26 @@ pub async fn start(config: &Config) -> anyhow::Result<Running> {
                 reuse_window,
                 keep,
             } => {
-                if kube_client.is_none() {
-                    kube_client = Some(
-                        kube_client_for(&config.kubernetes)
-                            .await
-                            .context("Kubernetes client")?,
-                    );
-                }
-                let client = kube_client.clone().expect("set above");
+                let client = kube.get().await?;
                 let namespace = namespace
                     .clone()
                     .unwrap_or_else(|| client.default_namespace().to_string());
+                let ca_certs = match cacerts {
+                    Some(path) => CaSource::Fixed(read_certs(path)?),
+                    None => {
+                        let name = if lc.name.is_empty() {
+                            "default"
+                        } else {
+                            &lc.name
+                        };
+                        CaSource::Learn(
+                            config
+                                .server
+                                .state_dir
+                                .join(format!("learned-ca-{name}.json")),
+                        )
+                    }
+                };
                 let signer = Arc::new(CertManagerSigner::new(
                     client,
                     Settings {
@@ -135,9 +167,12 @@ pub async fn start(config: &Config) -> anyhow::Result<Running> {
                         reuse_window: *reuse_window,
                         keep: *keep,
                         include_root: lc.include_root,
-                        ca_certs: read_certs(cacerts)?,
+                        ca_certs,
                     },
-                ));
+                )?);
+                if let Err(e) = signer.learn_from_cluster().await {
+                    tracing::warn!(label = %lc.name, "learning the CA certificates: {e:#}");
+                }
                 tasks.spawn(signer.clone().cleanup_loop());
                 Signer::CertManager(signer)
             }
@@ -147,6 +182,7 @@ pub async fn start(config: &Config) -> anyhow::Result<Running> {
             identity.extend(read_certs(path)?);
         }
         let policy = Policy {
+            label: lc.name.clone(),
             allow: lc
                 .allow
                 .iter()
@@ -155,9 +191,14 @@ pub async fn start(config: &Config) -> anyhow::Result<Running> {
             identity: TrustStore::new(&identity)?,
             identity_name_match: lc.identity_name_match,
             manual_approval: lc.manual_approval,
-            renew: TrustStore::new(signer.ca_certs())?,
+            renew: signer.cas().anchors(),
+            registration: lc.registered,
+            clients: clients.clone(),
         };
-        tracing::info!(label = %lc.name, path = %lc.base_path(), signer = signer.kind(), "EST endpoint");
+        tracing::info!(
+            label = %lc.name, path = %lc.base_path(), signer = signer.kind(),
+            registered = ?lc.registered, "EST endpoint"
+        );
         labels.push(Label {
             name: lc.name.clone(),
             base_path: lc.base_path(),
@@ -169,6 +210,7 @@ pub async fn start(config: &Config) -> anyhow::Result<Running> {
     let app = Arc::new(App {
         labels,
         audit: AuditLog::new(&config.server.state_dir),
+        clients,
     });
 
     let acceptor = TlsAcceptor::from(Arc::new(crate::tls::server_config(cert)?));
@@ -214,7 +256,33 @@ pub async fn start(config: &Config) -> anyhow::Result<Running> {
     })
 }
 
-async fn kube_client_for(k: &crate::config::KubernetesConfig) -> anyhow::Result<kube::Client> {
+/// One Kubernetes client, made when first needed.
+struct LazyKube<'a> {
+    config: &'a KubernetesConfig,
+    client: Option<kube::Client>,
+}
+
+impl<'a> LazyKube<'a> {
+    fn new(config: &'a KubernetesConfig) -> Self {
+        Self {
+            config,
+            client: None,
+        }
+    }
+
+    async fn get(&mut self) -> anyhow::Result<kube::Client> {
+        if self.client.is_none() {
+            self.client = Some(
+                kube_client_for(self.config)
+                    .await
+                    .context("Kubernetes client")?,
+            );
+        }
+        Ok(self.client.clone().expect("set above"))
+    }
+}
+
+async fn kube_client_for(k: &KubernetesConfig) -> anyhow::Result<kube::Client> {
     let options = kube::config::KubeConfigOptions {
         context: k.context.clone(),
         ..Default::default()

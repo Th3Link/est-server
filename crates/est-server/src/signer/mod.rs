@@ -4,10 +4,14 @@ pub mod cert_manager;
 pub mod local;
 
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::Duration;
 
+use arc_swap::ArcSwap;
 use est_proto::csr::Csr;
 use rustls::pki_types::CertificateDer;
+
+use crate::peer::TrustStore;
 
 /// A request the policy has looked at.
 pub struct SignRequest<'a> {
@@ -48,10 +52,10 @@ impl Signer {
 
     /// The CA certificates behind this signer: `/cacerts`, and the trust
     /// anchors for renewals.
-    pub fn ca_certs(&self) -> &[CertificateDer<'static>] {
+    pub fn cas(&self) -> &CaCerts {
         match self {
-            Signer::Local(s) => &s.ca_certs,
-            Signer::CertManager(s) => &s.ca_certs,
+            Signer::Local(s) => &s.cas,
+            Signer::CertManager(s) => &s.cas,
         }
     }
 
@@ -60,6 +64,44 @@ impl Signer {
             Signer::Local(_) => "local",
             Signer::CertManager(_) => "cert-manager",
         }
+    }
+}
+
+/// What `/cacerts` answers, and the anchors a renewal's client
+/// certificate is checked against. Fixed for a local CA or configured
+/// `cacerts`; learned from what cert-manager returns otherwise.
+pub struct CaCerts {
+    certs: ArcSwap<Vec<CertificateDer<'static>>>,
+    anchors: Arc<ArcSwap<TrustStore>>,
+}
+
+impl CaCerts {
+    pub fn new(certs: Vec<CertificateDer<'static>>) -> anyhow::Result<Self> {
+        Ok(Self {
+            anchors: Arc::new(ArcSwap::from_pointee(TrustStore::new(&certs)?)),
+            certs: ArcSwap::from_pointee(certs),
+        })
+    }
+
+    /// The certificates for `/cacerts`; empty while none is known yet.
+    pub fn certs(&self) -> Arc<Vec<CertificateDer<'static>>> {
+        self.certs.load_full()
+    }
+
+    /// Shared with the policy, which sees updates.
+    pub fn anchors(&self) -> Arc<ArcSwap<TrustStore>> {
+        self.anchors.clone()
+    }
+
+    /// Serve `certs`, trust `anchors`.
+    pub fn set(
+        &self,
+        certs: Vec<CertificateDer<'static>>,
+        anchors: &[CertificateDer<'static>],
+    ) -> anyhow::Result<()> {
+        self.anchors.store(Arc::new(TrustStore::new(anchors)?));
+        self.certs.store(Arc::new(certs));
+        Ok(())
     }
 }
 

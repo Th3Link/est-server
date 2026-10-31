@@ -197,6 +197,49 @@ impl Cluster {
         Ok(())
     }
 
+    /// Register a client as `EstClient` and wait until the server has
+    /// accepted it (`Valid=True`).
+    pub async fn register(&self, name: &str, names: &[&str], pins: &[String]) -> Result<()> {
+        use est_server::clients::k8s::{EstClient, EstClientSpec, PublicKeyPin};
+        let api: Api<EstClient> = Api::namespaced(self.client.clone(), &self.namespace);
+        let obj = EstClient::new(
+            name,
+            EstClientSpec {
+                dns_names: names.iter().map(|n| n.to_string()).collect(),
+                public_keys: pins
+                    .iter()
+                    .map(|p| PublicKeyPin {
+                        pin_sha256: p.clone(),
+                    })
+                    .collect(),
+                labels: vec![],
+            },
+        );
+        api.create(&PostParams::default(), &obj)
+            .await
+            .context("create EstClient (CRD installed?)")?;
+        self.wait_for(Duration::from_secs(30), || async {
+            let obj = api.get(name).await?;
+            Ok(obj.status.is_some_and(|s| {
+                s.conditions
+                    .iter()
+                    .any(|c| c.type_ == "Valid" && c.status == "True")
+            }))
+        })
+        .await
+        .context("EstClient not accepted by the server")
+    }
+
+    /// `status.lastIssued` of an `EstClient`.
+    pub async fn last_issued(
+        &self,
+        name: &str,
+    ) -> Result<Option<est_server::clients::k8s::LastIssued>> {
+        use est_server::clients::k8s::EstClient;
+        let api: Api<EstClient> = Api::namespaced(self.client.clone(), &self.namespace);
+        Ok(api.get(name).await?.status.and_then(|s| s.last_issued))
+    }
+
     pub async fn approve(&self, names: &[&str]) -> Result<()> {
         let r = self.request_for(names).await?;
         self.set_condition(&r.name, "Approved", "e2e-test").await

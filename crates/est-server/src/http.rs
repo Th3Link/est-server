@@ -13,9 +13,12 @@ use rustls::pki_types::CertificateDer;
 
 use crate::app::{App, Label};
 use crate::audit::Record;
+use crate::clients::Client;
+use crate::clients::k8s::LastIssued;
 use crate::names::is_valid_dns_name;
 use crate::peer::ConnInfo;
 use crate::policy::Decision;
+use crate::signer::cert_manager::rfc3339_now;
 use crate::signer::{Outcome, SignRequest, request_id};
 
 /// Largest request body taken: a CSR is well below 8 KiB.
@@ -59,7 +62,15 @@ async fn handle(
 }
 
 fn cacerts(label: &Label) -> Response {
-    match cms::encode_certs_only(&ders(label.signer.ca_certs())) {
+    let certs = label.signer.cas().certs();
+    if certs.is_empty() {
+        // Learned from the first certificate cert-manager issues.
+        return text(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "the CA certificates are not known yet",
+        );
+    }
+    match cms::encode_certs_only(&ders(&certs)) {
         Ok(der) => certs_only(wire::encode_body(&der)),
         Err(e) => text(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
@@ -115,13 +126,13 @@ async fn enroll(
     }
 
     let decision = if renew {
-        label.policy.reenroll(&names, &conn.chain)
+        label.policy.reenroll(&names, &csr.spki_der, &conn.chain)
     } else {
-        label.policy.enroll(&names, &conn.chain)
+        label.policy.enroll(&names, &csr.spki_der, &conn.chain)
     };
-    let (approved, reason, peer) = match decision {
-        Decision::Approved(reason, peer) => (true, reason.as_str(), peer),
-        Decision::NeedsApproval(peer) => (false, "manual", peer),
+    let (approved, reason, peer, client) = match decision {
+        Decision::Approved(reason, peer, client) => (true, reason.as_str(), peer, client),
+        Decision::NeedsApproval(peer) => (false, "manual", peer, None),
         Decision::Refused(status, why) => return refuse(conn, label, op, status, &why),
     };
     let client_cert = peer.as_ref().map(|p| p.subject.as_str());
@@ -141,7 +152,16 @@ async fn enroll(
                 Ok(der) => wire::encode_body(&der),
                 Err(e) => return text(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
             };
-            log_issue(app, label, op, reason, &req, &chain, response.len());
+            log_issue(
+                app,
+                label,
+                op,
+                reason,
+                client.as_deref(),
+                &req,
+                &chain,
+                response.len(),
+            );
             certs_only(response)
         }
         Ok(Outcome::Pending(after)) => {
@@ -164,11 +184,13 @@ async fn enroll(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn log_issue(
     app: &App,
     label: &Label,
     op: &str,
     reason: &str,
+    client: Option<&Client>,
     req: &SignRequest<'_>,
     chain: &[CertificateDer<'static>],
     body_len: usize,
@@ -176,9 +198,10 @@ fn log_issue(
     let (serial, not_after) = x509_parser::parse_x509_certificate(&chain[0])
         .map(|(_, c)| (c.raw_serial_as_string(), c.validity().not_after.timestamp()))
         .unwrap_or_default();
+    let client_id = client.map(|c| c.id.as_str());
     tracing::info!(
         label = %label.name, names = ?req.names, client = %req.client, reason, serial = %serial,
-        "{op}: certificate issued"
+        registered = client_id.unwrap_or("-"), "{op}: certificate issued"
     );
     let chain_len: usize = chain.iter().map(|c| c.len()).sum();
     if body_len > WARN_BODY || chain.len() > 5 || chain_len > 6 * 1024 {
@@ -193,17 +216,40 @@ fn log_issue(
         operation: op,
         reason,
         names: req.names,
-        serial,
+        serial: serial.clone(),
         not_after,
         client: req.client.to_string(),
         client_cert: req.client_cert,
+        client_id,
         signer: label.signer.kind(),
     });
+    if let Some(client) = client {
+        app.clients.issued(
+            client,
+            LastIssued {
+                serial,
+                not_after: rfc3339(not_after),
+                at: rfc3339_now(),
+                operation: op.to_string(),
+                label: label.name.clone(),
+            },
+        );
+    }
 }
 
 fn refuse(conn: &ConnInfo, label: &Label, op: &str, status: StatusCode, why: &str) -> Response {
     tracing::info!(client = %conn.remote, label = %label.name, status = status.as_u16(), "{op} refused: {why}");
     text(status, why)
+}
+
+fn rfc3339(unix: i64) -> String {
+    time::OffsetDateTime::from_unix_timestamp(unix)
+        .ok()
+        .and_then(|t| {
+            t.format(&time::format_description::well_known::Rfc3339)
+                .ok()
+        })
+        .unwrap_or_default()
 }
 
 fn ders(certs: &[CertificateDer<'static>]) -> Vec<Vec<u8>> {

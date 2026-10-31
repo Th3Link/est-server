@@ -6,6 +6,7 @@ pub mod app;
 pub mod audit;
 pub mod autotls;
 pub mod ca;
+pub mod clients;
 pub mod config;
 pub mod http;
 pub mod init;
