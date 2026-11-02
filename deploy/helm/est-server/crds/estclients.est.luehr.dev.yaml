@@ -75,14 +75,14 @@ spec:
                       nullable: true
                       type: string
                     message:
-                      default: ''
+                      default: ""
                       type: string
                     observedGeneration:
                       format: int64
                       nullable: true
                       type: integer
                     reason:
-                      default: ''
+                      default: ""
                       type: string
                     status:
                       type: string
@@ -104,7 +104,7 @@ spec:
                   notAfter:
                     type: string
                   operation:
-                    description: '`simpleenroll` or `simplereenroll`.'
+                    description: "`simpleenroll` or `simplereenroll`."
                     type: string
                   serial:
                     type: string
