@@ -11,7 +11,7 @@
 set -euo pipefail
 
 CLUSTER=${EST_E2E_CLUSTER:-est-e2e}
-CERT_MANAGER_VERSION=${CERT_MANAGER_VERSION:-v1.21.2}
+CERT_MANAGER_VERSION=${CERT_MANAGER_VERSION:-v1.21.3}
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 KUBECONFIG_FILE="$ROOT/target/e2e/kubeconfig"
 export KUBECONFIG="$KUBECONFIG_FILE"
