@@ -61,7 +61,7 @@ jobs:
       - uses: helm/kind-action@v1
         with:
           install_only: true
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@v5
       - run: scripts/e2e-cluster.sh up
       - run: cargo test --workspace --locked -- --ignored
         env:
@@ -118,7 +118,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@v5
       - run: helm lint deploy/helm/est-server --set 'serverCertificate.dnsNames[0]=est.example.com'
 
   # Builds the image (not pushed) so a broken Dockerfile shows up in PRs.
